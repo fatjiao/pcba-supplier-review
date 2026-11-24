@@ -1,13 +1,15 @@
 ---
 name: pcba-supplier-review
-description: 接收 SCH、PCB、BOM 和 Checklist 的本地路径，通过公司 RDP 在远程 Altium Designer 取证，结合 BOM 与 Checklist 初筛。输出本地 Excel，固定含原理图评审、原理图Checklist、原理图与BOM三张表。
+description: 接收 SCH、PCB、BOM 和 Checklist 的本地路径，执行本地取证或按公司 RDP 流程尝试远程 Altium Designer 取证。RDP 端到端待真实会话验收。输出原理图评审、原理图Checklist、原理图与BOM三张 Excel 表。
 ---
 
 # PCBA 供应商资料初筛
 
+**验证状态。** 本版已实测安装包解包、设计文件本地暂存、本地取证或读取同源导出件，以及三表 Excel 生成和回读。**RDP 端到端流程待真实会话验收。** 只有实际远程 AD 打开指定 SCH 和 PCB、回传同一代表位号的证据并在本机对照 BOM，以及回读核对本地三表报告后，才报告该次 RDP 端到端通过。按 [真实会话验收条件](references/rdp.md#真实会话端到端验收) 分别记录会话、文件通道、远程取证及本地报告的结果。
+
 输入四类本地资料：SCH 原理图、PCB、BOM 和适用的 Checklist。可接受同包目录，或分别提供路径。多页、层级、多板及装配变体在开始时核对范围，有同版 `.PrjPcb` 和发布对应表一并使用。锁定本次填写的板号、修订和变体，原件只读。
 
-1. 按 [本机与远程 AD 的工作流程](references/rdp.md) 通过公司已授权 RDP 用远程 Altium Designer 读取原生 SCH 和 PCB。BOM、Checklist 与报告留在本机。用户给了可用的同版导出时按 [证据要求](references/evidence.md) 核对可见字段和覆盖限制。公司保护件通过获准客户端读取。
+1. 需要原生远程取证时，按 [本机与远程 AD 的工作流程](references/rdp.md) 在公司已授权 RDP 中尝试用远程 Altium Designer 读取 SCH 和 PCB，并记录实际结果。BOM、Checklist 与报告留在本机。用户给了可用的同版导出时按 [证据要求](references/evidence.md) 核对可见字段和覆盖限制。公司保护件通过获准客户端读取。
 2. 从四类资料分别记录实际读取范围、出处和版次关系。核对图面生效模型与 PCB 实际封装、装配变体和物料清单。缺件、发布关系未确认、远程操作受阻或只能读图面时，写明影响和补件，继续已有证据足以支持的检查。
 3. 按 [报告规则](references/report.md) 完成三份明细，并用 [Checklist 条款映射](references/checklist.md) 确认适用条件和判定依据。现场量测、厂商规格或工程设置未核实时，保留具体证据缺口。
 

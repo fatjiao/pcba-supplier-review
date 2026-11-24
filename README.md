@@ -1,6 +1,8 @@
 # VeSync PCBA 供应商资料初筛
 
-供 VeSync 电子工程师审核供应商提交的原理图、PCB 和 BOM。工程师在 Windows 本机用 Codex 发起任务，通过公司已授权的 RDP 会话在远端 Altium Designer（AD）读取设计。本机读取 BOM 和 Checklist，生成并回读 Excel。**本机无需安装 AD。** 工程师根据报告中的证据复核，按公司流程确认放行。
+供 VeSync 电子工程师审核供应商提交的原理图、PCB 和 BOM。工程师在 Windows 本机用 Codex 发起任务，本机读取 BOM 和 Checklist，并生成、回读 Excel。原生设计的远程取证流程使用公司已授权的 RDP 会话和远端 Altium Designer（AD）。工程师根据报告中的证据复核，按公司流程确认放行。
+
+> **验证状态**　本版已实测安装包解包、设计文件本地暂存、本地取证或读取同源导出件，以及三表 Excel 的生成和回读。**RDP 端到端流程待真实会话验收。**
 
 ## 安装 Skill
 
@@ -19,7 +21,7 @@
 | BOM | 对应板卡和装配变体的物料表。如果工作簿包含多张表，指出本次正式使用的页签。 |
 | Checklist | 适用于本次板卡的公司 Checklist。提供文件和采用的版次。 |
 
-复用公司已授权的 RDP 会话。登录和身份验证在远程桌面完成。远端需要可打开设计文件的 AD，以及公司允许的工作副本传输和取证文件回传通道。受公司保护的表格通过获准的客户端读取，供应商原件保持只读。[RDP 取证流程](pcba-supplier-review/references/rdp.md)
+在公司已授权的 RDP 会话中按需试运行。登录和身份验证在远程桌面完成。远端需要可打开设计文件的 AD，以及公司允许的工作副本传输和取证文件回传通道。受公司保护的表格通过获准的客户端读取，供应商原件保持只读。[RDP 取证流程](pcba-supplier-review/references/rdp.md)
 
 在 Codex 对话中可直接提交下面的格式，替换示例路径和板卡信息。
 
@@ -32,11 +34,15 @@ PCB         D:\PCBA\ControlBoard\Design\ControlBoard.PcbDoc
 BOM         D:\PCBA\ControlBoard\Materials\ControlBoard_BOM.xlsx
 Checklist   D:\PCBA\Standards\Schematic_Checklist.xlsx
 
-请复用我已登录的公司 RDP 会话，在远程 AD 取证，
+请复用我已登录的公司 RDP 会话，尝试在远程 AD 取证并记录验收结果，
 将三表 Excel 报告保存到本机 D:\PCBA\ControlBoard\review-output\。
 ```
 
 板号、图纸修订、BOM 版次和装配变体以发布清单或可追溯的对应关系为准。文件名或日期仅用于协助定位。若版本或变体的对应关系尚未确认，报告会保留各份资料的原始标识、影响范围及需要补充的依据。[证据和版本核对](pcba-supplier-review/references/evidence.md)
+
+## RDP 端到端验收
+
+在真实会话中用远程 AD 打开本批次指定的 `.SchDoc` 和 `.PcbDoc`。从两份图档定位同一代表位号并读取原理图参数及 PCB 封装，将证据回传本机并核对该位号的 BOM 原行。将证据写入本地三表 Excel，重新打开并核对报告中的代表位号和来源。以上步骤全部完成后才记录 RDP 端到端通过。登录和文件往返分别记录为会话及通道状态。[完整验收条件](pcba-supplier-review/references/rdp.md#真实会话端到端验收)
 
 ## 阅读报告并复核
 
