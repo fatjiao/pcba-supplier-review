@@ -1,6 +1,6 @@
 # 生成及回读 Excel
 
-先按 [报告规则](report.md) 审核，再准备 UTF-8 的 `review.json`。中间文件放在本次本地工作目录。生成器负责三张表的布局、覆盖校验和工程师列，审核者按实际证据填写选型和条款判断。
+先按 [报告规则](report.md) 审核，再准备 UTF-8 的 `review.json`。中间文件放在本次本地工作目录。前三张表包含选型、条款及 BOM 证据。`pcbSafety` 提供第 4 张表的数据，按 [PCB 距离取证和判定](pcb-distance.md) 生成。
 
 ## 中间数据
 
@@ -62,18 +62,18 @@
 
 使用 Codex 工作区提供的 Node.js 与 `@oai/artifact-tool`。工作区依赖工具可用时从工具取得实际路径，否则查当前主机已配置的 Codex 捆绑运行时。Windows 上常见位置为当前用户目录下 `.cache/codex-runtimes/codex-primary-runtime/dependencies`，以本机实际安装为准。
 
-把本 Skill 的 [生成器](../scripts/build-review.mjs) 复制到本次临时目录，将该目录的 `node_modules` 链接到运行时的 `node_modules`。用同一运行时的 Node.js 执行，路径含空格时加引号。
+把本 Skill 的 [工作簿生成器](../scripts/build-review.mjs) 及其同目录 Excel 模块复制到本次临时目录，将该目录的 `node_modules` 链接到运行时的 `node_modules`。用同一运行时的 Node.js 执行，路径含空格时加引号。
 
 ```text
 node build-review.mjs review.json 项目-原理图PCB及BOM评审.xlsx
 node build-review.mjs review.json 项目-原理图PCB及BOM评审.xlsx 临时预览目录
 ```
 
-最后的目录参数可省略。提供时保存三张表的头部预览 PNG，供版面校验。中间证据和预览留在临时目录。
+最后的目录参数可省略。提供时保存各表的头部预览 PNG，供版面校验。已有的三表 JSON 仍可生成对应三张表。完整审核使用 `pcb_distance_review.py --base-review` 将 `pcbSafety` 加入同一 JSON。独立 PCB 距离审核使用 `--pcb-only` 和 `{ "project": "项目名", "pcbSafety": {...} }` 数据。中间证据和预览留在临时目录。
 
 ## 回读验收
 
-1. 确认可重新打开，顺序为「原理图评审」「原理图Checklist」「原理图与BOM」。核对位号、Checklist 原行、BOM 原行、替代料和无位号物料与独立清单相符。
+1. 完整审核的表序为「原理图评审」「原理图Checklist」「原理图与BOM」「PCB爬电距离检查」。核对位号、Checklist 原行、BOM 原行、替代料和无位号物料与独立清单相符。独立 PCB 输出回读其单张表。
 2. 抽核一个可比相符项、一个差异项以及一个预留或证据缺口。确认原值、页码、原行和结论吻合，图示封装、PCB 实际封装与 BOM 封装仍可区分。像 0603 的封装代号按文本保留。
 3. 核对第二张表仅有 NC、NG、OK，下拉限制可用。确认 NC 有实际不适用理由，NG 备注说明性质。检查工程师列留空、冻结、筛选、换行和公式缓存。
-4. 来源不可读时仍保留三张表，在受影响的表中说明范围或所需补件。空数据区不计入通过数量。交付说明实际完成的远程取证和本次局限。
+4. 核对第四表的量测口径、J/K、原表行号、端点、黄色 OK 和工程师复核栏。来源不可读时在受影响的表中说明范围和补件。交付说明实际完成的远程取证、制造前提及本次局限。

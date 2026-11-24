@@ -5,7 +5,7 @@ import { constants } from 'node:fs';
 import { SpreadsheetFile, Workbook } from '@oai/artifact-tool';
 
 const colors = { navy:'#183A59', ink:'#223346', muted:'#50687E', pale:'#EAF2F8',
-  edit:'#FFF2CF', red:'#FCE8E3', green:'#EBF4EE', gray:'#F1F4F7' };
+  edit:'#FFF2CF', red:'#FCE8E3', green:'#EBF4EE', gray:'#F1F4F7', amber:'#FFE994' };
 const font = 'Microsoft YaHei';
 const types = {schematic:'SCH',pcb:'PCB',bom:'BOM',checklist:'Checklist'};
 const coverage = {complete:'已枚举',partial:'部分读取',unavailable:'未取得'};
@@ -133,7 +133,7 @@ function cell(value) {
 
 function makeSheet(book,name,widths) {
   const sheet=book.worksheets.add(name);
-  const columns='ABCDEFGHIJK'.slice(0,widths.length);
+  const columns='ABCDEFGHIJKLM'.slice(0,widths.length);
   sheet.showGridLines=false;
   sheet.tabColor=colors.navy;
   for (const [index,width] of widths.entries()) {
@@ -362,18 +362,126 @@ function comparisonSheet(book,input,inventory) {
   return view;
 }
 
+function validatePcbSafety(input) {
+  check(input && typeof input==='object','缺少 PCB 安规审核数据 pcbSafety。');
+  requireText(input.scope,'PCB 安规检查范围');
+  check(Array.isArray(input.sources) && input.sources.length,'缺少 PCB 安规资料出处。');
+  for (const source of input.sources) requireText(source,'PCB 安规资料出处');
+  check(Array.isArray(input.rows) && input.rows.length,'缺少 PCB 安规检查明细。');
+  for (const row of input.rows) check(row && typeof row==='object','PCB 安规明细行格式不合法。');
+  unique(input.rows.map(row=>row.id),'PCB 安规检查编号');
+  return input.rows.map(row=>{
+    for (const key of ['boundary','metric','location','note','rule']) requireText(row[key],row.id+' '+key);
+    check(['OK','NG','NC'].includes(row.status),row.id+' 的 PCB 安规结论不合法。');
+    for (const key of ['vrms','limit','target','measured']) {
+      const value=row[key];
+      check(value==null || (Number.isFinite(value) && value>=0),row.id+' '+key+' 必须是非负数值。');
+    }
+    for (const key of ['comparable','lowerBound','upperBound','marginAllowed','amber']) {
+      check(row[key]==null || typeof row[key]==='boolean',row.id+' '+key+' 必须是布尔值。');
+    }
+    check(row.limit==null || row.target==null || row.target>=row.limit,row.id+' 推荐值低于安规底线。');
+    check(!row.lowerBound || !row.upperBound,row.id+' 的同一距离同时标为上下界。');
+    check(!(row.lowerBound || row.upperBound) || row.measured!=null,row.id+' 缺少已标明方向的距离界。');
+    const comparable=row.comparable!==false && row.measured!=null && row.limit!=null;
+    const passes=comparable && !row.upperBound && row.measured>=row.limit;
+    check(row.status!=='OK' || passes,row.id+' 缺少达到安规底线的证据。');
+    check(!comparable || row.status==='NC' || !passes || row.status==='OK',row.id+' 的安规结论与距离证据不一致。');
+    const belowTarget=passes && row.target!=null && row.measured<row.target;
+    const amber=row.amber===true || (!row.lowerBound && belowTarget && row.status==='OK');
+    check(!amber || (row.status==='OK' && belowTarget),row.id+' 标黄条件与证据不符。');
+    return {...row,amber,margin:row.status!=='NC' && comparable && row.target!=null && row.marginAllowed!==false};
+  });
+}
+
+function pcbSafetySheet(book,input,rows) {
+  const view=makeSheet(book,'PCB爬电距离检查',[76,180,115,285,88,88,88,94,105,84,368,165,138]);
+  const pcb=input.pcbSafety;
+  title(view,input,'PCB 爬电距离检查');
+  const width=view.widths.reduce((sum,n)=>sum+n,0);
+  const bands=[pcb.scope,pcb.condition,pcb.measurementNote,pcb.summary,
+    '达到安规底线 J 判 OK。已证实低于公司推荐值 K 的 OK 标黄。底线未达到或证据不足记 NG。明确不适用记 NC。'];
+  let header=2;
+  for (const value of bands.filter(Boolean)) {
+    band(view,header++,value,{height:Math.max(26,rowLines(value,width)*17+8)});
+  }
+  header++;
+  const first=header+1, last=header+rows.length;
+  const range=(address)=>view.sheet.getRange(address);
+  const labels=['编号','检查边界','量测项目','网络、端点与位置','工作电压\nVrms (V)',
+    '底线 J\n(mm)','推荐值 K\n(mm)','量测值\n(mm)','距推荐余量\n(mm)',
+    'AI结论','AI备注与证据','公司检查表定位','工程师\n复核结论'];
+  writeRows(view,first,rows.map(row=>[
+    row.id,row.boundary,row.metric,row.location,row.vrms,row.limit,row.target,row.measured,null,
+    row.status,row.note,row.rule,null,
+  ]),45);
+  addTable(view,header,rows.length,'PcbSafetyReview',labels,'M');
+  range('A'+header+':M'+header).format.wrapText=true;
+  range('A'+header+':M'+header).format.rowHeightPx=40;
+  range('E'+first+':E'+last).setNumberFormat('General');
+  range('F'+first+':I'+last).setNumberFormat('0.000###');
+  range('E'+first+':I'+last).format.horizontalAlignment='right';
+  range('I'+first+':I'+last).formulas=rows.map((row,index)=>{
+    const n=first+index;
+    return [row.margin?`=IF(COUNT(G${n}:H${n})=2,H${n}-G${n},"")`:null];
+  });
+  codeColors(view.sheet,'J',first,last,{NG:colors.red,NC:colors.gray}).format.font.bold=true;
+  range('M'+first+':M'+last).dataValidation={
+    rule:{type:'list',values:['NC','NG','OK']},
+    errorAlert:{style:'stop',title:'工程师复核结论',message:'请选择 NC、NG 或 OK。'},
+  };
+  for (const [index,row] of rows.entries()) {
+    const n=first+index;
+    if (row.lowerBound || row.upperBound) {
+      const sign=row.lowerBound?'≥':'≤';
+      const numberFormat=`"${sign}"0.000###;"${sign}-"0.000###`;
+      range('H'+n).setNumberFormat(numberFormat);
+      if (row.margin) range('I'+n).setNumberFormat(numberFormat);
+    }
+    if (row.amber) {
+      range('J'+n).conditionalFormats.addCustom(
+        `=AND($J${n}="OK",COUNT($F${n}:$H${n})=3,$H${n}>=$F${n},$H${n}<$G${n})`,
+        {fill:colors.amber,font:{bold:true,color:'#533B00'}},
+      );
+    }
+  }
+  band(view,last+2,'取证文件与量测口径',{bold:true});
+  for (const [index,source] of pcb.sources.entries()) {
+    band(view,last+3+index,source,{height:Math.max(26,rowLines(source,width)*17+8)});
+  }
+  view.sheet.freezePanes.freezeRows(header);
+  return {view,first,last};
+}
+
 async function main() {
-  const [,, dataPath,outputPath,previewDirectory,...extra]=process.argv;
-  check(dataPath && outputPath && !extra.length,'用法：node build-review.mjs review.json output.xlsx [preview-directory]');
+  const args=process.argv.slice(2);
+  const pcbOnly=args[0]==='--pcb-only';
+  const [dataPath,outputPath,previewDirectory,...extra]=pcbOnly?args.slice(1):args;
+  check(dataPath && outputPath && !extra.length,'用法：node build-review.mjs [--pcb-only] review.json output.xlsx [preview-directory]');
   check(path.extname(outputPath).toLowerCase()==='.xlsx','输出文件必须使用 .xlsx 扩展名。');
   const input=JSON.parse((await fs.readFile(dataPath,'utf8')).replace(/^\uFEFF/,''));
-  const inventory=validate(input);
+  requireText(input.project,'项目名');
+  const inventory=pcbOnly?null:validate(input);
+  const pcbRows=pcbOnly || input.pcbSafety!=null?validatePcbSafety(input.pcbSafety):null;
   const book=Workbook.create();
-  const schematic=schematicSheet(book,input);
-  const checklist=await checklistSheet(book,input,path.dirname(path.resolve(dataPath)));
-  const comparison=comparisonSheet(book,input,inventory);
+  const previews=[];
+  const schematic=pcbOnly?null:schematicSheet(book,input);
+  if (!pcbOnly) {
+    const checklist=await checklistSheet(book,input,path.dirname(path.resolve(dataPath)));
+    const comparison=comparisonSheet(book,input,inventory);
+    previews.push(
+      [schematic.view,'schematic','A1:K8'],
+      [schematic.view,'schematic-detail','A'+schematic.detailHeader+':K'+(schematic.first+2)],
+      [checklist,'checklist','A1:H9'],
+      [comparison,'comparison','A1:J12'],
+    );
+  }
+  if (pcbRows) {
+    const pcb=pcbSafetySheet(book,input,pcbRows);
+    previews.push([pcb.view,'pcb-safety','A1:M'+Math.min(pcb.last,pcb.first+4)]);
+  }
   book.recalculate();
-  if (schematic.modules) {
+  if (schematic?.modules) {
     const last=schematic.moduleRow+schematic.modules-1;
     const values=schematic.view.sheet.getRange('B'+schematic.moduleRow+':C'+last).values;
     const pending=input.schematic.filter(row=>row.decision==='待确认').length;
@@ -382,12 +490,7 @@ async function main() {
   }
   if (previewDirectory) {
     await fs.mkdir(previewDirectory,{recursive:true});
-    for (const [view,name,range] of [
-      [schematic.view,'schematic','A1:K8'],
-      [schematic.view,'schematic-detail','A'+schematic.detailHeader+':K'+(schematic.first+2)],
-      [checklist,'checklist','A1:H9'],
-      [comparison,'comparison','A1:J12'],
-    ]) {
+    for (const [view,name,range] of previews) {
       const png=await book.render({sheetName:view.sheet.name,range,scale:0.85,format:'png'});
       await fs.writeFile(path.join(previewDirectory,name+'.png'),new Uint8Array(await png.arrayBuffer()));
     }
