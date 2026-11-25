@@ -2,7 +2,7 @@
 
 供 VeSync 电子工程师审核供应商提交的原理图、PCB 和 BOM。工程师在 Windows 本机用 Codex 发起审核并生成 Excel。完整审核交付四张表，PCB 距离检查也可单独交付。需要远端设计取证时，可使用公司已授权的 RDP 会话和远端 Altium Designer（AD）。
 
-> **验证状态**　已从解压后的安装包用双面 Altium PCB 和同版 GM1 复算，验证机械一层铣槽、距离判定、黄色 OK 和本地 Excel 回读。**RDP 端到端流程待真实会话验收。**
+> **验证状态**　已从解压后的安装包用双面 Altium PCB 及经制造资料确认的铣槽 Gerber 复算，验证开槽、距离判定、黄色 OK 和本地 Excel 回读。**RDP 端到端流程待真实会话验收。**
 
 ## 安装 Skill
 
@@ -17,7 +17,7 @@
 | 输入 | 提供内容 |
 | --- | --- |
 | 原理图 | 全套 `.SchDoc`。有 `.PrjPcb` 时一并提供，保留工程目录结构。 |
-| PCB | 对应板卡的 `.PcbDoc`。可一并提供同版 GM1、加工说明、板厚或其他导出件。 |
+| PCB | 对应板卡的 `.PcbDoc`。可一并提供同版制造说明、Gerber、钻孔表和板厚。 |
 | BOM | 对应板卡和装配变体的物料表。如果工作簿包含多张表，指出本次正式使用的页签。 |
 | Checklist | 提供适用于本次板卡的原理图 Checklist。PCB 距离检查默认用包内的公司 Sheet2 规则。 |
 
@@ -42,7 +42,7 @@ Checklist   D:\PCBA\Standards\Schematic_Checklist.xlsx
 
 ## 单独检查 PCB 距离
 
-输入 `$pcba-supplier-review`，提供原理图或同版网表、`.PcbDoc` 路径和可用的同版 GM1，说明只生成「PCB爬电距离检查」。已知销售市场、污染等级、工作电压或加工条件时一并提供。Skill 核对机械一层铣槽、网络边界和板面路径，使用包内《05 电子电路Check模板工具-》第 2 张表的 **209 条规则**。脚本使用 Python 和 `olefile`、`shapely`，读取 GM1 还需 `gerbonara`。[PCB 距离取证和使用说明](pcba-supplier-review/references/pcb-distance.md)
+输入 `$pcba-supplier-review`，提供原理图或同版网表及 `.PcbDoc` 路径，说明只生成「PCB爬电距离检查」。已知市场、污染等级、工作电压或加工条件时一并提供。基础量测采用原生板切口和无镀铜孔。附加铣槽依据同版制造资料逐个确认。Skill 使用包内《05 电子电路Check模板工具-》第 2 张表的 **209 条规则**。脚本使用 Python 和 `olefile`、`shapely`，解析附加加工 Gerber 时还需 `gerbonara`。[PCB 距离取证和使用说明](pcba-supplier-review/references/pcb-distance.md)
 
 ## RDP 端到端验收
 
@@ -93,12 +93,12 @@ Checklist   D:\PCBA\Standards\Schematic_Checklist.xlsx
 
 ### 4. PCB 爬电距离检查
 
-本例按欧规隔离方案、污染等级 III、250 Vrms 工况和同版 GM1 铣槽计算。距离来自设计图档。
+本例按欧规隔离方案、污染等级 III、250 Vrms 工况计算。示例板的隔离槽以同版制造资料为准，由制板图和加工 Gerber 对应确认。`GM1` 等层文件名只用于定位图档。加工用途未确认时，按 PCB 原生板切口和无镀铜孔量测，并在备注中标出缺少的制造依据。
 
 | 量测项目 | 网络、端点与位置 | 底线 J (mm) | 推荐值 K (mm) | 量测值 (mm) | AI结论 | AI备注与规则定位 |
 | --- | --- | ---: | ---: | ---: | --- | --- |
 | 初次级爬电 | 顶层 `U2-3 → U2-2`，连续板面 | 8.000 | 8.300 | 8.100 | 🟨 **OK** | 达到 J，距 K 差 0.200 mm。`J17:K17` |
-| 初次级电气间隙 | 顶层 `PRI_RETURN → SEC_GND`，铜边直线跨 GM1 槽 | 3.500 | 3.800 | 4.200 | OK | 同层铜边间隙达到推荐值。`J16:K16` |
+| 初次级电气间隙 | 顶层 `PRI_RETURN → SEC_GND`，铜边直线跨已确认的隔离槽 | 3.500 | 3.800 | 4.200 | OK | 同层铜边间隙达到推荐值。`J16:K16` |
 | 走线至板边 | 底层 `NTC1` 铜边 `X=68.480 mm`，同一 Y 处板边 `X=69.100 mm` | 0.800 | 0.800 | 0.620 | **NG** | 低于底线 0.180 mm。`J46:K46` |
 
 🟨 对应 Excel 中的黄色结论格。只运行此项时，可在 Codex 输入下面的请求，并替换文件路径。
@@ -109,10 +109,10 @@ $pcba-supplier-review
 请只做控制板 V1.2 的 PCB 距离审核，输出「PCB爬电距离检查」。
 原理图   D:\PCBA\ControlBoard\Design\ControlBoard.SchDoc
 PCB      D:\PCBA\ControlBoard\Design\ControlBoard.PcbDoc
-GM1      D:\PCBA\ControlBoard\Gerber\ControlBoard.GM1
+制板资料 D:\PCBA\ControlBoard\Fabrication\
 
 用包内公司 Sheet2 规则，按欧规隔离、污染等级 III 和 250 Vrms 示例工况核对。
-说明机械一层铣槽对最短路径的影响，报告保存到本机 review-output。
+依据同版制造资料确认加工槽，说明已确认槽对最短路径的影响。报告保存到本机 review-output。
 ```
 
 ### RDP 取证状态样例

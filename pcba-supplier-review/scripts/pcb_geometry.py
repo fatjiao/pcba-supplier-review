@@ -303,36 +303,48 @@ def read_native(path):
     return copper, shapely.union_all(outlines), cutouts + holes, mechanical, plated_slots, stack
 
 
-def gerber_routes(path, apertures):
-    if not apertures or not all(isinstance(item, int) and item > 0 for item in apertures):
-        raise ValueError("Provide the confirmed routing apertures in mechanical_route.apertures for GM1")
+def route_ids(values, name, minimum):
+    if values is None:
+        return set()
+    if not isinstance(values, list) or not values or any(type(item) is not int or item < minimum for item in values):
+        raise ValueError(f"mechanical_route.{name} must be a nonempty list of integer IDs >= {minimum}")
+    return set(values)
+
+
+def gerber_routes(path, apertures, object_indices):
+    if not apertures and not object_indices:
+        raise ValueError("Select confirmed machining objects in mechanical_route.object_indices or apertures")
     try:
         from gerbonara import GerberFile, graphic_objects
         from gerbonara.apertures import CircleAperture
         from gerbonara.utils import MM
     except ImportError as error:
-        raise ValueError("GM1 parsing requires gerbonara: python -m pip install gerbonara") from error
+        raise ValueError("Routing Gerber parsing requires gerbonara: python -m pip install gerbonara") from error
     objects = GerberFile.open(str(path)).objects
     routes = []
     for index, item in enumerate(objects):
         aperture = getattr(item, "aperture", None)
         code = getattr(aperture, "original_number", None)
-        if code not in apertures:
+        if (object_indices and index not in object_indices) or (apertures and code not in apertures):
             continue
         if not isinstance(aperture, CircleAperture) or aperture.hole_dia or getattr(item, "polarity_dark", True) is False:
-            raise ValueError(f"Unsupported selected GM1 aperture D{code} on object {index}")
+            raise ValueError(f"Unsupported selected routing Gerber aperture D{code} on object {index}")
         if isinstance(item, graphic_objects.Line):
             coords = [(item.x1, item.y1), (item.x2, item.y2)]
         elif isinstance(item, graphic_objects.Arc):
             subdivisions = list(item.approximate(max_error=0.001, unit=MM, clip_max_error=False))
             coords = [(subdivisions[0].x1, subdivisions[0].y1), *[(part.x2, part.y2) for part in subdivisions]]
         else:
-            raise ValueError(f"Selected GM1 aperture D{code} has a non-routing object {index}")
+            raise ValueError(f"Selected routing Gerber aperture D{code} has a non-routing object {index}")
         coordinate_unit = item.unit if isinstance(item, graphic_objects.Line) else subdivisions[0].unit
         axis = LineString([(MM(x, coordinate_unit), MM(y, coordinate_unit)) for x, y in coords])
         routes.append(Route("GM1", index, 0, MM(aperture.diameter, aperture.unit), axis, index, code))
-    if set(apertures) != {route.aperture for route in routes}:
-        raise ValueError("A confirmed routing aperture is absent from the selected GM1 file")
+    missing_objects = object_indices - {route.index for route in routes}
+    missing_apertures = apertures - {route.aperture for route in routes}
+    if missing_objects:
+        raise ValueError(f"Confirmed routing object IDs do not match the file and aperture selection: {sorted(missing_objects)}")
+    if missing_apertures:
+        raise ValueError(f"Confirmed routing apertures are absent from the selected objects: {sorted(missing_apertures)}")
     return routes
 
 
@@ -643,8 +655,9 @@ def reconcile_openings(native, routes, route_options):
 def main():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument("--pcb", type=Path, required=True)
-    parser.add_argument("--gm1", type=Path)
-    parser.add_argument("--scopes", type=Path, help="Scope selections, route apertures, and optional minimum board thickness")
+    parser.add_argument("--routing-gerber", "--gm1", dest="gm1", type=Path,
+                        help="Optional manufacturing Gerber. Only explicitly selected objects contribute openings.")
+    parser.add_argument("--scopes", type=Path, help="Scope selections, confirmed routing objects, and optional minimum board thickness")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -660,10 +673,15 @@ def run(args):
     route_options = options.get("mechanical_route", {})
     if not isinstance(route_options, dict):
         raise ValueError("mechanical_route must be a JSON object")
-    if not args.gm1 and {"apertures", "datum_matches"} & route_options.keys():
-        raise ValueError("mechanical_route.apertures and datum_matches require --gm1")
+    apertures = route_ids(route_options.get("apertures"), "apertures", 1)
+    object_indices = route_ids(route_options.get("object_indices"), "object_indices", 0)
+    use_routing_gerber = bool(apertures or object_indices)
+    if not args.gm1 and (use_routing_gerber or "datum_matches" in route_options):
+        raise ValueError("Gerber route selections and datum_matches require --routing-gerber")
+    if "datum_matches" in route_options and not use_routing_gerber:
+        raise ValueError("datum_matches requires explicitly selected routing Gerber objects")
     if args.gm1 and "widths_mm" in route_options:
-        raise ValueError("Use mechanical_route.apertures with --gm1; widths_mm is for native-only routes")
+        raise ValueError("Use Gerber object selection with --routing-gerber; widths_mm is for native-only routes")
     if args.out.resolve() in {path.resolve() for path in (args.pcb, args.gm1, args.scopes) if path}:
         raise ValueError("The output path must differ from all source input paths")
     if "minimum_board_thickness_mm" in options:
@@ -672,8 +690,8 @@ def run(args):
         thickness = None
     copper, outline, native_openings, mechanical, plated_slots, stack = read_native(args.pcb)
     registration = None
-    if args.gm1:
-        plotted = gerber_routes(args.gm1, route_options.get("apertures"))
+    if use_routing_gerber:
+        plotted = gerber_routes(args.gm1, apertures, object_indices)
         if "datum_matches" in route_options:
             routes, registration = explicit_registration(plotted, mechanical, route_options["datum_matches"])
         else:
@@ -724,7 +742,7 @@ def run(args):
     result = {
         "schema_version": 1,
         "pcb": source(args.pcb),
-        "gm1": {**source(args.gm1), "registration": registration} if args.gm1 else None,
+        "gm1": {**source(args.gm1), "registration": registration, "used_for_openings": use_routing_gerber} if args.gm1 else None,
         "scopes": source(args.scopes) if args.scopes else None,
         "geometry": {
             "outline_bounds_mm": list(outline.bounds),
@@ -734,8 +752,8 @@ def run(args):
             "plated_slot_count": plated_slots,
             "route_group_count": len(groups),
             "route_segment_count": len(routes),
-            "route_model": "registered_gm1" if args.gm1 else "selected_native" if routes else "native_cutouts_only",
-            "mechanical_route_selection_requires_review": bool(mechanical and not routes),
+            "route_model": "registered_gm1" if use_routing_gerber else "selected_native" if routes else "native_cutouts_only",
+            "mechanical_route_selection_requires_review": bool((mechanical or args.gm1) and not routes),
             "overridden_native_cutout_ids": overridden_cutouts,
             "route_groups": groups,
             "mechanical_routes": details,

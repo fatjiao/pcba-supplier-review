@@ -106,10 +106,17 @@ def measured(selection, geometry, scopes):
             return {}, "", "当前结果没有已配准并确认为铣槽的加工图元。"
         route = min(routes, key=lambda row: row["width_mm"])
         width = route["width_mm"]
-        trace = f"PCB 机械一层 Tracks6 #{route.get('native_index')} @{route.get('native_offset')}"
+        traces = []
+        if route.get("native_index") is not None:
+            stream = route.get("native_stream") or "图元"
+            location = f"PCB {stream} #{route['native_index']}"
+            if route.get("native_offset") is not None:
+                location += f" @{route['native_offset']}"
+            traces.append(location)
         if route.get("gm1_object") is not None:
-            trace += f" / GM1 #{route['gm1_object']} D{route['aperture']}"
-        return {"lower_mm": width, "upper_mm": width}, trace, "已声明铣槽图元的名义加工宽度。"
+            source = (geometry.get("gm1") or {}).get("filename") or "加工 Gerber"
+            traces.append(f"{source} #{route['gm1_object']} D{route['aperture']}")
+        return {"lower_mm": width, "upper_mm": width}, " / ".join(traces), "已确认隔离槽图元的名义加工宽度。"
     raise ValueError(f"未知量测项目 {kind}")
 
 
@@ -120,7 +127,7 @@ def bind_plan(plan, geometry, rules):
         if source and source.get("filename") and source.get("sha256"):
             pcb.setdefault("sources", []).append(f"{source['filename']} SHA-256 {source['sha256']}")
     if geometry.get("geometry", {}).get("mechanical_route_selection_requires_review"):
-        note = "本次只按原生板切口建模。机械一层有待确认的对象，当前结论限于该图档情景。"
+        note = "本次加工模型采用原生板切口和无镀铜孔。附加机械图元的加工用途待确认。"
         pcb["measurementNote"] = "".join(filter(None, [pcb.get("measurementNote"), note]))
     scopes = {entry["id"]: entry for entry in geometry.get("measurements", [])}
     for row in pcb["rows"]:

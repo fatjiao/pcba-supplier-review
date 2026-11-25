@@ -7,11 +7,11 @@ description: 审核供应商的 SCH、PCB、BOM 和 Checklist，逐位号核对�
 
 **验证状态。** 本地文件读取和 Excel 生成可独立执行。**RDP 端到端待真实会话验收。** 按 [真实会话验收条件](references/rdp.md#真实会话端到端验收) 记录远端 AD 打开、代表位号取证、回传、本地 BOM 比对及 Excel 回读的实际结果。
 
-完整审核接收 SCH、PCB、BOM 和适用的原理图 Checklist。可提供目录或文件路径，有同版 `.PrjPcb` 和发布对应表时一并使用。开始前核对板号、原理图和 PCB 修订、装配变体及提交范围，原件只读。
+完整审核接收 SCH、PCB、BOM 和适用的原理图 Checklist。本地 AD 和已配置的远端 AD 共用同一输入，可提供目录或文件路径。有同版 `.PrjPcb` 和发布对应表时一并使用。开始前核对板号、原理图和 PCB 修订、装配变体及提交范围，原件只读。
 
-PCB 距离检查默认使用随包的 [当前公司 PCB 安规规则](references/pcb-safety-rules.json)，对应《05 电子电路Check模板工具-》第 2 张表。按 [PCB 距离取证和判定](references/pcb-distance.md) 确认适用分支、识别网络和机械层加工槽、运行量测并生成 Sheet4。用户只要求查 PCB 距离时，交付独立 Sheet4。有同版 GM1 时一并读入，记录加工图档与 PCB 板切口的差异。
+PCB 距离检查默认使用随包的 [当前公司 PCB 安规规则](references/pcb-safety-rules.json)，对应《05 电子电路Check模板工具-》第 2 张表。按 [PCB 距离取证和判定](references/pcb-distance.md) 确认适用分支和网络，使用 PCB 的板切口、无镀铜孔及制造资料确认的加工槽量测，并生成 Sheet4。Gerber 层名用于定位图档，槽的用途逐个依据加工定义判定。用户只要求查 PCB 距离时，交付独立 Sheet4。
 
-1. 需要原生远程取证时，按 [本机与远程 AD 的工作流程](references/rdp.md) 在公司已授权 RDP 中尝试用远程 Altium Designer 读取 SCH 和 PCB，并记录实际结果。BOM、Checklist 与报告留在本机。用户给了可用的同版导出时按 [证据要求](references/evidence.md) 核对可见字段和覆盖限制。公司保护件通过获准客户端读取。
+1. 需要原生远程取证时，按 [本机与远程 AD 的工作流程](references/rdp.md) 检查已有的接入方式。使用正常运行的接入方式自动打开工作副本、读取证据并回传。连接和取证诊断由 Skill 处理，工程师提供审核输入。接入受阻时标明卡点和受影响的审查。BOM、Checklist 与报告留在本机。用户给了可用的同版导出时按 [证据要求](references/evidence.md) 核对可见字段和覆盖限制。公司保护件通过获准客户端读取。
 2. 从四类资料分别记录实际读取范围、出处和版次关系。核对图面生效模型与 PCB 实际封装、装配变体和物料清单。缺件、发布关系未确认、远程操作受阻或只能读图面时，写明影响和补件，继续已有证据足以支持的检查。
 3. 按 [报告规则](references/report.md) 完成明细，并用 [Checklist 条款映射](references/checklist.md) 确认原理图条款。Sheet4 的安规限值 J 和公司推荐值 K 单独记录。达到 J 但低于 K，记黄色 OK。低于 J 或底线证据不足，记 NG 并说明原因。明确不适用才记 NC。
 
