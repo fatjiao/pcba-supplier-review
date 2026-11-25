@@ -1,6 +1,6 @@
 # VeSync PCBA 供应商资料初筛
 
-供 VeSync 电子工程师审核供应商提交的原理图、PCB 和 BOM。工程师在 Windows 本机用 Codex 发起审核并生成 Excel。完整审核交付四张表，PCB 距离检查也可单独交付。需要远端设计取证时，可使用公司已授权的 RDP 会话和远端 Altium Designer（AD）。
+供 VeSync 电子工程师审核供应商提交的原理图、PCB 和 BOM。工程师在 Windows 本机用 Codex 发起审核，可选择本地 Excel 或飞书电子表格。完整审核交付四张表，PCB 距离检查也可单独交付。需要远端设计取证时，可使用公司已授权的 RDP 会话和远端 Altium Designer（AD）。
 
 > **验证状态**　已从解压后的安装包用双面 Altium PCB 及经制造资料确认的铣槽 Gerber 复算，验证开槽、距离判定、黄色 OK 和本地 Excel 回读。**RDP 端到端流程待真实会话验收。**
 
@@ -40,6 +40,51 @@ Checklist   D:\PCBA\Standards\Schematic_Checklist.xlsx
 
 板号、图纸修订、BOM 版次和装配变体以发布清单或可追溯的对应关系为准。文件名或日期仅用于协助定位。若版本或变体的对应关系尚未确认，报告会保留各份资料的原始标识、影响范围及需要补充的依据。[证据和版本核对](pcba-supplier-review/references/evidence.md)
 
+## 选择报告输出
+
+| 输出 | 在审核请求中说明 | 交付 |
+| --- | --- | --- |
+| 本地 Excel（默认） | 指定本地输出目录，或沿用默认的本地输出。 | `.xlsx` 工作簿。 |
+| 飞书电子表格 | 指定飞书输出，可提供报告标题和目标文件夹。 | 可在飞书中打开的原生电子表格链接。 |
+
+两种输出使用相同的审核明细和工作表顺序。飞书模式先在本机生成审核工作簿，再用应用身份生成原生电子表格。支持单板和多板工作簿，例如 3、4 或 12 张工作表。飞书版保留图片相关的文字定位，内嵌图片可在本地工作簿中查看。工程师可直接在飞书表格中填报复核结论。
+
+```text
+$pcba-supplier-review
+
+审核这批控制板的 SCH、PCB、BOM 和 Checklist，输出到飞书电子表格。
+报告标题为「控制板 V1.2 供应商资料初筛」。返回表格链接。
+```
+
+## 接入飞书 CLI
+
+1. 用 `lark-cli --version` 确认当前终端能调用 CLI。本流程使用过 CLI 1.0.100。已安装 Node.js 和 npm 时，可执行 `npm install -g @larksuite/cli`。使用 Windows 独立安装包时，将 `lark-cli.exe` 所在目录加入用户 PATH。[飞书 CLI 安装指南](https://open.feishu.cn/document/no_class/mcp-archive/feishu-cli-installation-guide.md) · [官方下载](https://github.com/larksuite/cli/releases)
+2. 使用公司批准的飞书应用。有现成配置时直接进行下一步。首次配置可执行 `lark-cli config init --new`，在飞书页面完成应用初始化。应用需要开通下列权限。按公司流程配置可用范围，并完成应用发布及必要的管理员审核。[自建应用发布与审核](https://open.feishu.cn/document/best-practices/intro-to-custom-app-review?lang=zh-CN)
+3. 启用应用的机器人能力后，运行 `lark-cli api GET /open-apis/bot/v3/info --as bot`，核对当前 CLI 使用的应用机器人。
+
+| 操作 | 应用权限 |
+| --- | --- |
+| 创建报告表格 | `sheets:spreadsheet:create` |
+| 写入审核数据 | `sheets:spreadsheet:write_only` |
+| 回读工作表结构、公式和规则 | `sheets:spreadsheet:read` |
+| 按原类型回读料号和数值 | `sheets:spreadsheet:readonly`，应用已有 `sheets:spreadsheet` 时已涵盖此接口。 |
+
+生成和核对使用 `--as bot`。默认在应用的云空间创建表格。需要团队复核时，指定已授权给应用、且复核人员有访问权限的目标文件夹。指定查看、编辑或由机器人发送链接属于单独的协作操作。使用个人账号执行任一操作前，须取得请求人的明确许可。[飞书云文档权限说明](https://open.feishu.cn/document/server-docs/docs/docs-overview?lang=zh-CN)
+
+如单独请求机器人发送链接，应用需要 `im:message:send_as_bot` 权限，收件人须处于应用可用范围。发送返回 `230013` 时，请应用管理员在「版本管理与发布」核对并更新收件人的可用范围。配置生效后，可用机器人发送原表格链接。[机器人发送消息说明](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/create?lang=zh-CN) · [飞书应用发布说明](https://open.feishu.cn/document/client-docs/h5/development-guide/step-4)
+
+### 从已有 Excel 生成飞书报告
+
+已有审核工作簿时，可以直接用脚本发布。运行环境需要 Python 和 `openpyxl`。在仓库根目录运行以下 PowerShell 命令，替换工作簿路径和标题。
+
+```powershell
+python -m pip install openpyxl
+python pcba-supplier-review/scripts/publish-feishu.py 'D:\PCBA\review-output\audit.xlsx' --dry-run
+python pcba-supplier-review/scripts/publish-feishu.py 'D:\PCBA\review-output\audit.xlsx' --title '控制板 V1.2 供应商资料初筛'
+```
+
+`--dry-run` 在本机预检，无需访问飞书。正式生成时，可用 `--folder-token` 指定已授权的飞书文件夹，或用 `--cli` 指定 CLI 可执行文件。脚本默认在工作簿旁保存 `audit.feishu-state.json`，也可用 `--state` 指定状态文件路径。中途失败后，用同一份工作簿、标题、文件夹和状态路径继续发布。[飞书发布及回读](pcba-supplier-review/references/feishu.md)
+
 ## 单独检查 PCB 距离
 
 输入 `$pcba-supplier-review`，提供原理图或同版网表及 `.PcbDoc` 路径，说明只生成「PCB爬电距离检查」。已知市场、污染等级、工作电压或加工条件时一并提供。基础量测采用原生板切口和无镀铜孔。附加铣槽依据同版制造资料逐个确认。Skill 使用包内《05 电子电路Check模板工具-》第 2 张表的 **209 条规则**。脚本使用 Python 和 `olefile`、`shapely`，解析附加加工 Gerber 时还需 `gerbonara`。[PCB 距离取证和使用说明](pcba-supplier-review/references/pcb-distance.md)
@@ -50,7 +95,7 @@ Checklist   D:\PCBA\Standards\Schematic_Checklist.xlsx
 
 ## 阅读报告并复核
 
-完整审核交付一份本地 `.xlsx`，顺序如下。[报告格式](pcba-supplier-review/references/report.md)
+完整审核交付一份工作簿，顺序如下。[报告格式](pcba-supplier-review/references/report.md)
 
 | 工作表 | 查看内容 |
 | --- | --- |
@@ -101,7 +146,7 @@ Checklist   D:\PCBA\Standards\Schematic_Checklist.xlsx
 | 初次级电气间隙 | 顶层 `PRI_RETURN → SEC_GND`，铜边直线跨已确认的隔离槽 | 3.500 | 3.800 | 4.200 | OK | 同层铜边间隙达到推荐值。`J16:K16` |
 | 走线至板边 | 底层 `NTC1` 铜边 `X=68.480 mm`，同一 Y 处板边 `X=69.100 mm` | 0.800 | 0.800 | 0.620 | **NG** | 低于底线 0.180 mm。`J46:K46` |
 
-🟨 对应 Excel 中的黄色结论格。只运行此项时，可在 Codex 输入下面的请求，并替换文件路径。
+🟨 对应报告中的黄色结论格。只运行此项时，可在 Codex 输入下面的请求，并替换文件路径。
 
 ```text
 $pcba-supplier-review
