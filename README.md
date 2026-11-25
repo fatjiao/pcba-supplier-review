@@ -1,8 +1,8 @@
 # VeSync PCBA 供应商资料初筛
 
-供 VeSync 电子工程师审核供应商提交的原理图、PCB 和 BOM。工程师在 Windows 本机用 Codex 发起审核，可选择本地 Excel 或飞书电子表格。完整审核交付四张表，PCB 距离检查也可单独交付。需要远端设计取证时，可使用公司已授权的 RDP 会话和远端 Altium Designer（AD）。
+供 VeSync 电子工程师审核供应商提交的原理图、PCB 和 BOM。工程师在 Windows 本机用 Codex 发起审核，默认直接读取受支持的原生二进制 Altium `.SchDoc` 和 `.PcbDoc`。没有安装 Altium Designer（AD）或没有连接 RDP 的工程师也可以运行。报告可交付为本地 Excel 或飞书电子表格。完整审核交付四张表，PCB 距离检查也可单独交付。
 
-> **验证状态**　已从解压后的安装包用双面 Altium PCB 及经制造资料确认的铣槽 Gerber 复算，验证开槽、距离判定、黄色 OK 和本地 Excel 回读。**RDP 端到端流程待真实会话验收。**
+> **验证状态**　已在新建的 Python 环境中，从解压后的安装包直接读取真实 SCH 和 PCB 图档。双层 PCB 与同版制造资料确认的铣槽 Gerber 已通过开槽、距离、黄色 OK 和 Excel 回读验证。RDP 自动取证仍待真实会话端到端验收。
 
 ## 安装 Skill
 
@@ -21,7 +21,7 @@
 | BOM | 对应板卡和装配变体的物料表。如果工作簿包含多张表，指出本次正式使用的页签。 |
 | Checklist | 提供适用于本次板卡的原理图 Checklist。PCB 距离检查默认用包内的公司 Sheet2 规则。 |
 
-在公司已授权的 RDP 会话中按需试运行。登录和身份验证在远程桌面完成。远端需要可打开设计文件的 AD，以及公司允许的工作副本传输和取证文件回传通道。受公司保护的表格通过获准的客户端读取，供应商原件保持只读。[RDP 取证流程](pcba-supplier-review/references/rdp.md)
+如需在 AD 中补充取证，可使用本机 AD，或复用公司已授权的 RDP 会话和远端 AD。远端取证需要公司允许的工作副本传输和证据回传通道。受公司保护的表格通过获准的客户端读取，供应商原件保持只读。[RDP 取证流程](pcba-supplier-review/references/rdp.md)
 
 在 Codex 对话中可直接提交下面的格式，替换示例路径和板卡信息。
 
@@ -34,11 +34,28 @@ PCB         D:\PCBA\ControlBoard\Design\ControlBoard.PcbDoc
 BOM         D:\PCBA\ControlBoard\Materials\ControlBoard_BOM.xlsx
 Checklist   D:\PCBA\Standards\Schematic_Checklist.xlsx
 
-请复用我已登录的公司 RDP 会话，尝试在远程 AD 取证并记录验收结果，
-将四表 Excel 报告保存到本机 D:\PCBA\ControlBoard\review-output\。
+请直接读取本机原理图和 PCB，核对 BOM 和 Checklist，
+并将四表 Excel 报告保存到本机 D:\PCBA\ControlBoard\review-output\。
 ```
 
 板号、图纸修订、BOM 版次和装配变体以发布清单或可追溯的对应关系为准。文件名或日期仅用于协助定位。若版本或变体的对应关系尚未确认，报告会保留各份资料的原始标识、影响范围及需要补充的依据。[证据和版本核对](pcba-supplier-review/references/evidence.md)
+
+## 在本机直接读取 Altium 图档
+
+原理图提取器保留图页结构、器件位号、参数、封装模型、引脚端点和导线图元，可复核局部连线。PCB 提取器读取图档中的器件位号、封装、焊盘及其网络。两者都保留原始记录定位，便于工程师回查。双层 PCB 的电气间隙、爬电、槽宽和板边距离使用已有的几何核查入口。[原生图档直读说明](pcba-supplier-review/references/native-altium.md) · [PCB 距离取证和使用说明](pcba-supplier-review/references/pcb-distance.md)
+
+完整编译网表、装配变体和正式 ERC/DRC 结论需要对应的同版网表、变体资料或检查报告。图档中的局部连接可用于初筛。资料缺口写入报告并标出受影响的检查项。[证据和版本核对](pcba-supplier-review/references/evidence.md)
+
+直接提取使用 Python 3.10 及以上和 `olefile`。在仓库根目录运行以下 PowerShell 命令，替换源文件和输出路径。多页原理图为每个 `.SchDoc` 重复传入一次 `--sch`。
+
+```powershell
+python -m pip install olefile
+python pcba-supplier-review/scripts/read-altium-schematic.py --sch 'file.SchDoc' --out 'schematic.json'
+python pcba-supplier-review/scripts/read-altium-pcb.py --pcb 'file.PcbDoc' --out 'pcb.json'
+python pcba-supplier-review/scripts/read-altium.py --sch 'file.SchDoc' --pcb 'file.PcbDoc' --out 'design-evidence.json'
+```
+
+这些命令生成 JSON 图档证据。用 `$pcba-supplier-review` 提供原理图、PCB、BOM 和 Checklist，Skill 会按位号核对并生成所选的 Excel 或飞书报告。
 
 ## 选择报告输出
 
@@ -87,7 +104,15 @@ python pcba-supplier-review/scripts/publish-feishu.py 'D:\PCBA\review-output\aud
 
 ## 单独检查 PCB 距离
 
-输入 `$pcba-supplier-review`，提供原理图或同版网表及 `.PcbDoc` 路径，说明只生成「PCB爬电距离检查」。已知市场、污染等级、工作电压或加工条件时一并提供。基础量测采用原生板切口和无镀铜孔。附加铣槽依据同版制造资料逐个确认。Skill 使用包内《05 电子电路Check模板工具-》第 2 张表的 **209 条规则**。脚本使用 Python 和 `olefile`、`shapely`，解析附加加工 Gerber 时还需 `gerbonara`。[PCB 距离取证和使用说明](pcba-supplier-review/references/pcb-distance.md)
+输入 `$pcba-supplier-review`，提供原理图或同版网表及 `.PcbDoc` 路径，说明只生成「PCB爬电距离检查」。已知市场、污染等级、工作电压或加工条件时一并提供。双层板以原生板切口和无镀铜孔为基础量测，附加铣槽依据同版制造资料逐个确认。Skill 使用包内《05 电子电路Check模板工具-》第 2 张表的 **209 条规则**。脚本使用 Python 和 `olefile`、`shapely`，解析附加加工 Gerber 时还需 `gerbonara`。[PCB 距离取证和使用说明](pcba-supplier-review/references/pcb-distance.md)
+
+可识别的刚性单叠构多层板支持顶层或底层指定铜对象的同层二维边到边间隙。用 `scopes.json` 指定两侧的铜对象。多层板的爬电、内层间距、跨面路径、实际板边和槽需另有对应证据。
+
+```powershell
+python pcba-supplier-review/scripts/pcb_geometry.py --outer-clearance-only --pcb 'board.PcbDoc' --scopes 'scopes.json' --out 'geometry.json'
+```
+
+公开复核样件采用 Arribada Argos SMD v1.0 四层板，以同版 `GTL` 和 `GBL` 对照顶层和底层铜边。[多层板外层铜边间隙](pcba-supplier-review/references/pcb-distance.md#多层板外层铜边间隙)
 
 ## RDP 端到端验收
 
@@ -178,6 +203,6 @@ Checklist 的 AI 结论只有三种。[Checklist 判定规则](pcba-supplier-rev
 
 PCB 距离达到安规底线 J 但低于公司推荐值 K，标为**黄色 OK**。低于 J 或底线证据不足，记 NG 并在备注说明。工程师可按图页、位号、坐标、BOM 原行和条款复核，记录实装和加工证据。
 
-## RDP 或资料不可用
+## 图档、证据或 RDP 不可用
 
-若无法登录、传输工作副本、打开远程 AD 项目或回传证据，报告会记录受阻的步骤和受影响的检查。本地可读的 BOM、Checklist 和已确认对应同版的导出件仍可用于其覆盖范围内的初筛。可以补充同版原理图 PDF、网表、PCB 导出或 DRC 报告以支持对应检查。缺少适用的公司 Checklist 时，报告标为资料预检，正式条款覆盖率记为不可计算。
+若本机图档无法直接读取，可以补充同版原理图 PDF、网表、PCB 导出或 DRC 报告，也可按需使用 AD 取证。需要远端取证时，报告记录受阻步骤和受影响的检查。可读的原生图档、BOM、Checklist 和同版导出件可用于各自覆盖范围内的初筛。缺少适用的公司 Checklist 时，报告标为资料预检，正式条款覆盖率记为不可计算。

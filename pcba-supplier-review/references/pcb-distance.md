@@ -16,7 +16,7 @@
 
 ## 执行本地测距
 
-随包的 [量测脚本](../scripts/pcb_geometry.py) 适用于支持的 Altium 二进制双面板文件。优先使用 Codex 工作区提供的 Python，依赖为 `olefile` 和 `shapely` 2.x。解析附加加工 Gerber 还需 `gerbonara`。缺少依赖时可用 `python -m pip install --target <本次临时依赖目录> olefile "shapely>=2" gerbonara`，再将该目录加入此次 Python 的模块搜索路径。网络、加工对象和最小厚度取自本次板卡证据。
+随包的 [量测脚本](../scripts/pcb_geometry.py) 提供双层板量测和 [多层外层铜边间隙](#多层板外层铜边间隙)。优先使用 Codex 工作区提供的 Python，依赖为 `olefile` 和 `shapely` 2.x。解析附加加工 Gerber 还需 `gerbonara`。缺少依赖时可用 `python -m pip install --target <本次临时依赖目录> olefile "shapely>=2" gerbonara`，再将该目录加入此次 Python 的模块搜索路径。网络、加工对象和最小厚度取自本次板卡证据。
 
 ```json
 {
@@ -32,7 +32,7 @@
 }
 ```
 
-选择器可使用精确 `nets`、`refs` 和 `pads`。同一侧的同时指定条件取交集，`pads` 写成 `[{"ref":"U2","pad":"4"}]`。`threshold_mm` 用于安排候选搜索，公司的适用限值由规则计算器单独确定。`minimum_board_thickness_mm` 取制造要求的最小板厚，用于跨面求证。
+选择器可使用精确的 `nets`、`refs`、`pads` 和 `objects`。同一侧同时指定的条件取交集。用 `[{"ref":"U2","pad":"4"}]` 选择焊盘，或用 `[{"stream":"Vias6","index":346}]` 选择零起始的原生图元。`threshold_mm` 用于安排候选搜索，公司的适用限值由规则计算器单独确定。`minimum_board_thickness_mm` 取制造要求的最小板厚，用于双层模式的跨面求证。
 
 ```text
 python pcb_geometry.py --pcb board.PcbDoc --scopes scopes.json --out geometry.json
@@ -43,6 +43,44 @@ python pcb_geometry.py --pcb board.PcbDoc --scopes scopes.json --out geometry.js
 脚本可用原生机械一层图元配准已选的加工路径。其他层或未能唯一匹配时，根据独立配准证据在 `mechanical_route.datum_matches` 提供至少两个对应点，坐标以 mm 填 `gm1_mm` 和 `pcb_mm`。厂商已确认原生机械一层某厚度的线或弧全部为所需槽、且没有附加工 Gerber 时，也可用 `mechanical_route.widths_mm` 指定该批次的确认宽度。当原生切口伸出匹配加工槽边界时，核对发布制造图档。确认制造图档为本情景的加工定义后，才使用 `mechanical_route.confirmed_routes_override_cutouts: true` 并记录依据。
 
 回看输出中的对象数、层别、板外形、原生切口、机械层匹配、铣槽组、镀通槽和结果覆盖。检查最近点的坐标、屏障与相关端点。尚未确认制造开槽时，保留本模型的图档情景和成品证据缺口。筛查多种可能工艺时，为每个情景单独生成量测证据。没有相关匹配、未支持板型或没有覆盖到必要路径时，可用同版 AD 导出的爬电、制造文件或成品测量补充。AD 的常规 Clearance 对象规则与 Creepage Distance 规则分别使用。 [Altium 电气规则](https://www.altium.com/documentation/altium-designer/pcb/design-rule-types/electrical#creepage-distance)
+
+## 多层板外层铜边间隙
+
+对于能识别铜层顺序的刚性单叠构 Altium 板，使用外层模式测量指定铜对象在顶层或底层的二维边缘距离。过孔按起止层确认在哪一面有铜，并读取该面的环形外径。结果记录原生数据流、图元序号、偏移、网络和最近点。遇到未知层跨度或未支持的焊盘结构时，使用同版 Gerber、独立量测或其他合适的证据补查。
+
+以下范围可用来复算公开四层样件的第一对顶层间隙。外层模式的范围文件只提供铜选择，板厚和铣槽使用各自对应的核查流程。
+
+~~~json
+{
+  "scopes": [
+    {
+      "id": "argos-top-via-track",
+      "a": {"objects": [{"stream": "Vias6", "index": 346}]},
+      "b": {"objects": [{"stream": "Tracks6", "index": 488}]}
+    }
+  ]
+}
+~~~
+
+~~~powershell
+python pcb_geometry.py --outer-clearance-only --pcb board.PcbDoc --scopes scopes.json --out geometry.json
+~~~
+
+Sheet4 仅用这份几何结果绑定明确针对同一外层和所选对象的铜边电气间隙。选择 kind 为 `clearance`，layer 为 `top`、`bottom` 或 `same-face`。内层、跨面、爬电、成品板边和加工槽条款使用对应的独立证据。适用条款缺少通过依据时保留 NG 及缺口。网络组的整体结论需选择该条款涉及的全部铜对象。
+
+### 开源四层板复核
+
+使用 Arribada Argos SMD v1.0，固定提交为 `05ba8d2c6408aaeecd346fc41d2a419715d970c3`，项目许可为 GPL-3.0。以 Altium 原件运行外层模式，再按同版 Gerber 的坐标和口径独立计算。两个坐标系用 X、Y 各 25.4 mm 平移配准。两种方法均使用铜边，Gerber 叠加极性后的局部间隙另做抽点核对。[项目及许可](https://github.com/arribada/argos-smd-hw/tree/05ba8d2c6408aaeecd346fc41d2a419715d970c3) · [原生图档](https://raw.githubusercontent.com/arribada/argos-smd-hw/05ba8d2c6408aaeecd346fc41d2a419715d970c3/module-BGA_RG-4layers_v1.0.PcbDoc) · [同版制造 ZIP](https://raw.githubusercontent.com/arribada/argos-smd-hw/05ba8d2c6408aaeecd346fc41d2a419715d970c3/Project%20Outputs%20for%20BGA_RF-ArticGR/stm32wl-dev_SMD_V1.0_202404/stm32wl-dev_SMD_V1.0.zip)
+
+| 层面 | 原生图元（零起始） | 同版 Gerber 图元（零起始） | 原生（mm） | Gerber（mm） |
+| --- | --- | --- | ---: | ---: |
+| 顶层 | Vias6 #346 ↔ Tracks6 #488 | GTL #751 ↔ #700 | 0.135629 | 0.135713 |
+| 顶层 | Pads6 #115 ↔ Vias6 #161 | GTL #248 ↔ #733 | 0.110019 | 0.109911 |
+| 顶层 | Vias6 #114 ↔ Vias6 #164 | GTL #714 ↔ #736 | 0.242417 | 0.242351 |
+| 底层 | Pads6 #30 ↔ Vias6 #42 | GBL #31 ↔ #112 | 0.279096 | 0.279215 |
+| 底层 | Pads6 #22 ↔ Pads6 #23 | GBL #14 ↔ #15 | 0.832000 | 0.832104 |
+
+五组最大绝对差为 0.000119 mm，其中包括使用逐层外径的过孔。结果用于核对该设计的名义几何和图元对应关系。
 
 ## 从测距结果生成 Sheet4
 

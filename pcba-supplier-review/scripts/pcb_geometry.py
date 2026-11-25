@@ -1,4 +1,4 @@
-"""Read Altium binary PCB outer-layer copper and bound nominal board-surface distances."""
+"""Measure Altium PCB outer copper and supported board-surface distances."""
 
 from argparse import ArgumentParser
 from collections import Counter
@@ -9,6 +9,8 @@ import math
 from pathlib import Path
 from statistics import median
 import struct
+
+from altium_io import UNIT_MM, integer, legacy_copper_order, records, text_fields, units
 
 try:
     import numpy as np
@@ -22,51 +24,11 @@ except ImportError as error:
     raise SystemExit("Install the PCB geometry dependency first: python -m pip install olefile shapely") from error
 
 
-UNIT_MM = 0.00000254
 OUTER = {1: "top", 32: "bottom"}
 MECHANICAL_ONE = 57
 GEOMETRY_TOLERANCE_MM = 0.000001
 ALIGNMENT_TOLERANCE_MM = 0.01
 SAMPLE_STEP_MM = 0.01
-
-
-def integer(data, offset=0, form="I"):
-    return struct.unpack_from("<" + form, data, offset)[0]
-
-
-def units(data, offset, count):
-    return tuple(value * UNIT_MM for value in struct.unpack_from(f"<{count}i", data, offset))
-
-
-def text_fields(blob):
-    fields = blob.rstrip(b"\0").decode("cp936", errors="replace").split("|")
-    return dict(field.split("=", 1) for field in fields if "=" in field)
-
-
-def records(ole, name, record_type=None, blocks=1):
-    if not ole.exists(f"{name}/Data") or not ole.exists(f"{name}/Header"):
-        raise ValueError(f"Unsupported PCB document: required stream {name} is absent")
-    data = ole.openstream(f"{name}/Data").read()
-    count = integer(ole.openstream(f"{name}/Header").read())
-    position = 0
-    for index in range(count):
-        offset = position
-        if record_type is not None:
-            if data[position] != record_type:
-                raise ValueError(f"Unexpected record type in {name}[{index}] at {position}")
-            position += 1
-        values = []
-        for _ in range(blocks):
-            size = integer(data, position)
-            position += 4
-            end = position + size
-            if end > len(data):
-                raise ValueError(f"Truncated record in {name}[{index}]")
-            values.append(data[position:end])
-            position = end
-        yield index, offset, values
-    if position != len(data):
-        raise ValueError(f"Unsupported extra bytes in {name} at {position}")
 
 
 def named_records(ole, name):
@@ -187,28 +149,41 @@ def polygon_parts(geometry):
     return [part for child in getattr(geometry, "geoms", []) for part in polygon_parts(child)]
 
 
-def verify_stack(ole):
+def verify_stack(ole, outer_clearance_only=False):
     board = named_records(ole, "Board6")[0]
     if any(board.get(key) for key in ("V9_SUBSTACK1_ID", "LAYERSUBSTACK_V8_1ID")):
-        raise ValueError("Multiple board stacks are outside the supported two-layer geometry model")
+        raise ValueError("Multiple board stacks are outside the supported geometry models")
     copper_stack = [
         board.get(key.removesuffix("_COPTHICK") + "_NAME", key)
         for key, value in board.items()
         if key.startswith("V9_STACK_LAYER") and key.endswith("_COPTHICK")
         and value and value not in ("0", "0mil", "0mm")
     ]
+    if outer_clearance_only:
+        order = legacy_copper_order(board)
+        if not order or (copper_stack and len(copper_stack) != len(order)):
+            raise ValueError("Could not verify a consistent copper layer order from Board6")
+        if any(board.get(key, "").upper() == "TRUE" for key in ("V9_SUBSTACK0_ISFLEX", "LAYERSUBSTACK_V8_0ISFLEX")):
+            raise ValueError("Flexible layer stacks are outside the outer copper clearance model")
+        if ole.exists("EmbeddedBoards6/Header") and integer(ole.openstream("EmbeddedBoards6/Header").read()):
+            raise ValueError("Embedded board panels require the individual source PCB for outer clearance")
+        names = copper_stack or [board.get(f"LAYER{code}NAME", f"Layer {code}") for code in order]
+        return names, set(order)
     if copper_stack and len(copper_stack) != 2:
-        raise ValueError(f"Found {len(copper_stack)} copper layers; the script supports two-layer boards")
+        raise ValueError(f"Found {len(copper_stack)} copper layers; use --outer-clearance-only for supported multilayer outer clearance")
     if not copper_stack and (board.get("LAYER1NEXT"), board.get("LAYER32PREV")) != ("32", "1"):
         raise ValueError("Could not verify a supported two-layer stack from the PCB document")
     return copper_stack or ["Top Layer", "Bottom Layer"]
 
 
-def read_native(path):
+def read_native(path, *, outer_clearance_only=False):
     copper, cutouts, holes, mechanical = [], [], [], []
     plated_slots = 0
     with olefile.OleFileIO(str(path)) as ole:
-        stack = verify_stack(ole)
+        if outer_clearance_only:
+            stack, layer_codes = verify_stack(ole, outer_clearance_only=True)
+        else:
+            stack = verify_stack(ole)
         nets = [item["NAME"] for item in named_records(ole, "Nets6")]
         components = named_records(ole, "Components6")
 
@@ -224,8 +199,20 @@ def read_native(path):
             pad = values[0][1:].decode("cp936", errors="replace")
             data, extra = values[4:]
             layer = data[0]
+            if outer_clearance_only and layer not in (*OUTER, 74):
+                continue
             x, y, tx, ty, _, _, bx, by, diameter = units(data, 13, 9)
             angle = integer(data, 52, "d")
+            if outer_clearance_only:
+                if diameter and not data[60]:
+                    continue
+                # Both simple and top/middle/bottom pads store their outer sizes in the base record.
+                if len(data) < 63 or data[62] not in {0, 1} or (extra and len(extra) < 596) or any(extra[275:531]):
+                    raise ValueError(f"Pads6[{index}] has an unsupported outer-layer pad stack or hole offset")
+                if layer == 74 and len(data) >= 120 and data[114:118] not in {
+                    b"\0\0\0\0", b"\x0f\0\x03\x01", b"\x20\0\0\x01",
+                }:
+                    raise ValueError(f"Pads6[{index}] has an unverified multilayer pad span")
             hole_shape = extra[262] if len(extra) >= 596 else 0
             if diameter and hole_shape not in (0, 2):
                 raise ValueError(f"Unsupported drill shape {hole_shape} in Pads6[{index}]")
@@ -253,10 +240,20 @@ def read_native(path):
 
         for index, offset, (data,) in records(ole, "Vias6", 3):
             x, y, diameter, _ = units(data, 13, 4)
-            if diameter <= 0:
-                continue
-            for side in set(data[29:31]) & OUTER.keys():
-                add(side, "Vias6", index, offset, data, Point(x, y).buffer(diameter / 2, quad_segs=64))
+            via_span = set(data[29:31])
+            outer_sides = via_span & OUTER.keys()
+            mode = 0
+            if outer_clearance_only:
+                if len(data) < 31 or not via_span <= layer_codes or len(via_span) != 2:
+                    raise ValueError(f"Vias6[{index}] has an unverified layer span")
+                mode = data[74] if len(data) > 74 else 0
+                if outer_sides and mode and (mode not in {1, 2} or len(data) < 203):
+                    raise ValueError(f"Vias6[{index}] has an unsupported outer diameter table")
+            for side in outer_sides:
+                # Altium's 32-entry complex via table stores the two outer lands at indices 0 and 31.
+                outer_diameter = units(data, 75 if side == 1 else 199, 1)[0] if mode else diameter
+                if outer_diameter > 0:
+                    add(side, "Vias6", index, offset, data, Point(x, y).buffer(outer_diameter / 2, quad_segs=64))
 
         for stream, record_type in (("Tracks6", 4), ("Arcs6", 1)):
             for index, offset, (data,) in records(ole, stream, record_type):
@@ -274,7 +271,8 @@ def read_native(path):
                 if width <= 0:
                     continue
                 if layer == MECHANICAL_ONE:
-                    mechanical.append(Route(stream, index, offset, width, axis))
+                    if not outer_clearance_only:
+                        mechanical.append(Route(stream, index, offset, width, axis))
                 else:
                     add(layer, stream, index, offset, data, axis.buffer(width / 2, quad_segs=64))
 
@@ -290,17 +288,21 @@ def read_native(path):
             if polygon is None:
                 continue
             if fields.get("ISBOARDCUTOUT") == "TRUE":
-                cutouts.append(Opening(f"board-cutout-{index}", polygon, "Regions6", index, offset))
+                if not outer_clearance_only:
+                    cutouts.append(Opening(f"board-cutout-{index}", polygon, "Regions6", index, offset))
             elif data[0] in OUTER and data[2] != 2 and fields.get("KIND", "0") == "0":
                 add(data[0], "Regions6", index, offset, data, polygon)
 
-        board_regions = [region_polygon(data)[1] for _, _, (data,) in records(ole, "BoardRegions", 11)]
-        outlines = [part for geometry in board_regions if geometry is not None for part in polygon_parts(geometry)]
-        if not outlines:
-            raise ValueError("No supported BoardRegions outline in the PCB document")
+        outline = None
+        if not outer_clearance_only:
+            board_regions = [region_polygon(data)[1] for _, _, (data,) in records(ole, "BoardRegions", 11)]
+            outlines = [part for geometry in board_regions if geometry is not None for part in polygon_parts(geometry)]
+            if not outlines:
+                raise ValueError("No supported BoardRegions outline in the PCB document")
+            outline = shapely.union_all(outlines)
     if not copper:
         raise ValueError("No supported outer-layer copper primitives in the PCB document")
-    return copper, shapely.union_all(outlines), cutouts + holes, mechanical, plated_slots, stack
+    return copper, outline, cutouts + holes, mechanical, plated_slots, stack
 
 
 def route_ids(values, name, minimum):
@@ -553,11 +555,12 @@ def seam_lower_bound(a, b, radius, seams, planar):
 
 def evidence(a, b, surface, openings):
     start, end = nearest_points(a.polygon, b.polygon)
+    distances = {"mm": start.distance(end), "a": a.anchor(start), "b": b.anchor(end)}
+    if surface is None:
+        return distances
     segment = Point(start.x, start.y) if start.equals(end) else LineString([start, end])
     return {
-        "mm": start.distance(end),
-        "a": a.anchor(start),
-        "b": b.anchor(end),
+        **distances,
         "crosses_voids": [opening.id for opening in openings if opening.polygon.intersection(segment).length > GEOMETRY_TOLERANCE_MM],
         "continuous_surface": bool(surface.covers(segment)),
     }
@@ -571,6 +574,8 @@ def measure(a, b, surface, openings, seams, radius, thickness=None):
     pairs, distances = tree.query_nearest(ap, return_distance=True, all_matches=False)
     minimum_index = int(np.argmin(distances))
     near = evidence(a[pairs[0, minimum_index]], b[pairs[1, minimum_index]], surface, openings)
+    if surface is None:
+        return {"planar_clearance": near}
     if thickness is None and near["continuous_surface"]:
         return {"planar_clearance": near, "creepage": {"lower_mm": near["mm"], "upper_mm": near["mm"],
                 "exact": True, "path": near, "examined_pairs": 1}}
@@ -601,25 +606,30 @@ def measure(a, b, surface, openings, seams, radius, thickness=None):
 
 
 def select(copper, selector):
-    if not isinstance(selector, dict) or not selector or set(selector) - {"nets", "refs", "pads"}:
-        raise ValueError("A scope selector needs one or more of nets, refs or pads")
+    getters = {
+        "nets": lambda item: item.net,
+        "refs": lambda item: item.ref,
+        "pads": lambda item: (item.ref, item.pad),
+        "objects": lambda item: (item.stream, item.index),
+    }
+    if not isinstance(selector, dict) or not selector or set(selector) - getters.keys():
+        raise ValueError("A scope selector needs one or more of nets, refs, pads or objects")
     filters = {}
     for key, values in selector.items():
         if not isinstance(values, list) or not values:
             raise ValueError(f"Selector {key} must be a nonempty list")
-        filters[key] = {(item["ref"], str(item["pad"])) for item in values} if key == "pads" else set(values)
-    rows = [
-        item for item in copper
-        if ("nets" not in filters or item.net in filters["nets"])
-        and ("refs" not in filters or item.ref in filters["refs"])
-        and ("pads" not in filters or (item.ref, item.pad) in filters["pads"])
-    ]
+        if key == "pads":
+            filters[key] = {(item["ref"], str(item["pad"])) for item in values}
+        elif key == "objects":
+            if any(not isinstance(item, dict) or not isinstance(item.get("stream"), str)
+                   or type(item.get("index")) is not int or item["index"] < 0 for item in values):
+                raise ValueError("Each objects selector needs a stream and a nonnegative record index")
+            filters[key] = {(item["stream"], item["index"]) for item in values}
+        else:
+            filters[key] = set(values)
+    rows = [item for item in copper if all(getters[key](item) in values for key, values in filters.items())]
     for key, values in filters.items():
-        getter = {
-            "nets": lambda item: item.net, "refs": lambda item: item.ref,
-            "pads": lambda item: (item.ref, item.pad),
-        }[key]
-        missing = values - {getter(item) for item in rows}
+        missing = values - {getters[key](item) for item in rows}
         if missing:
             raise ValueError(f"Selector {key} does not match outer copper: {sorted(missing, key=str)}")
     return {layer: [item for item in rows if item.layer == layer] for layer in OUTER.values()}
@@ -652,12 +662,57 @@ def reconcile_openings(native, routes, route_options):
     return [opening for opening in native if opening.id not in conflicts] + routes, conflicts
 
 
+def measure_scopes(copper, scopes, surface, openings, seams, thickness):
+    measurements = []
+    ids = set()
+    for scope in scopes:
+        if not isinstance(scope["id"], str) or not scope["id"].strip() or scope["id"] in ids:
+            raise ValueError("Scope ids must be nonempty and unique")
+        ids.add(scope["id"])
+        first, second = select(copper, scope["a"]), select(copper, scope["b"])
+        for layer in OUTER.values():
+            if {id(row) for row in first[layer]} & {id(row) for row in second[layer]}:
+                raise ValueError(f"Scope {scope['id']} selects the same copper on both sides")
+        threshold = positive_number(scope.get("threshold_mm", 8.3), "threshold_mm")
+        radius = positive_number(scope.get("search_mm", threshold + 2), "search_mm")
+        if radius < threshold:
+            raise ValueError("search_mm must be at least threshold_mm")
+        layers = {layer: measure(first[layer], second[layer], surface, openings, seams, radius)
+                  for layer in OUTER.values()}
+        cross = {"verified": thickness is not None, "top_to_bottom": None, "bottom_to_top": None}
+        if thickness is not None:
+            cross["top_to_bottom"] = measure(first["top"], second["bottom"], surface, openings, seams, radius, thickness)
+            cross["bottom_to_top"] = measure(first["bottom"], second["top"], surface, openings, seams, radius, thickness)
+        measurements.append({"id": scope["id"], "a": scope["a"], "b": scope["b"], "threshold_mm": threshold,
+                             "layers": layers, "cross_face": cross})
+    return measurements
+
+
+def outer_clearance(args, options):
+    if args.gm1 or options.get("mechanical_route") or "minimum_board_thickness_mm" in options:
+        raise ValueError("Outer clearance measures planar copper only; omit routing and minimum board thickness")
+    scopes = options.get("scopes")
+    if not isinstance(scopes, list) or not scopes:
+        raise ValueError("Outer clearance needs at least one scope with both copper selections")
+    copper, _, _, _, _, stack = read_native(args.pcb, outer_clearance_only=True)
+    return {
+        "schema_version": 1, "pcb": source(args.pcb), "scopes": source(args.scopes),
+        "geometry": {"coverage": "outer_clearance_only", "copper_layers": stack,
+                     "nets": sorted({item.net for item in copper if item.net})},
+        "measurements": measure_scopes(copper, scopes, None, [], [], None),
+        "limits": ["Nominal same-face top and bottom copper clearance for the selected objects.",
+                   "Inner copper, board edges, routed openings, creepage and cross-face paths are outside this model."],
+    }
+
+
 def main():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument("--pcb", type=Path, required=True)
     parser.add_argument("--routing-gerber", "--gm1", dest="gm1", type=Path,
                         help="Optional manufacturing Gerber. Only explicitly selected objects contribute openings.")
     parser.add_argument("--scopes", type=Path, help="Scope selections, confirmed routing objects, and optional minimum board thickness")
+    parser.add_argument("--outer-clearance-only", action="store_true",
+                        help="Measure planar top and bottom copper clearance on a supported layer stack")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -670,6 +725,12 @@ def run(args):
     options = json.loads(args.scopes.read_text(encoding="utf-8-sig")) if args.scopes else {}
     if not isinstance(options, dict):
         raise ValueError("The scope file must contain a JSON object")
+    if args.out.resolve() in {path.resolve() for path in (args.pcb, args.gm1, args.scopes) if path}:
+        raise ValueError("The output path must differ from all source input paths")
+    if args.outer_clearance_only:
+        result = outer_clearance(args, options)
+        args.out.write_text(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        return
     route_options = options.get("mechanical_route", {})
     if not isinstance(route_options, dict):
         raise ValueError("mechanical_route must be a JSON object")
@@ -682,8 +743,6 @@ def run(args):
         raise ValueError("datum_matches requires explicitly selected routing Gerber objects")
     if args.gm1 and "widths_mm" in route_options:
         raise ValueError("Use Gerber object selection with --routing-gerber; widths_mm is for native-only routes")
-    if args.out.resolve() in {path.resolve() for path in (args.pcb, args.gm1, args.scopes) if path}:
-        raise ValueError("The output path must differ from all source input paths")
     if "minimum_board_thickness_mm" in options:
         thickness = positive_number(options["minimum_board_thickness_mm"], "minimum_board_thickness_mm")
     else:
@@ -718,27 +777,7 @@ def run(args):
     }
     details, groups = route_report(routes, native_openings, by_layer, outline)
     seams = build_seams(board, routes, [item for item in native_openings if item.id not in overridden_cutouts])
-    measurements = []
-    ids = set()
-    for scope in options.get("scopes", []):
-        if not isinstance(scope["id"], str) or not scope["id"].strip() or scope["id"] in ids:
-            raise ValueError("Scope ids must be nonempty and unique")
-        ids.add(scope["id"])
-        first, second = select(copper, scope["a"]), select(copper, scope["b"])
-        for layer in OUTER.values():
-            if {id(row) for row in first[layer]} & {id(row) for row in second[layer]}:
-                raise ValueError(f"Scope {scope['id']} selects the same copper on both sides")
-        threshold = positive_number(scope.get("threshold_mm", 8.3), "threshold_mm")
-        radius = positive_number(scope.get("search_mm", threshold + 2), "search_mm")
-        if radius < threshold:
-            raise ValueError("search_mm must be at least threshold_mm")
-        layers = {layer: measure(first[layer], second[layer], board, openings, seams, radius) for layer in OUTER.values()}
-        cross = {"verified": thickness is not None, "top_to_bottom": None, "bottom_to_top": None}
-        if thickness is not None:
-            cross["top_to_bottom"] = measure(first["top"], second["bottom"], board, openings, seams, radius, thickness)
-            cross["bottom_to_top"] = measure(first["bottom"], second["top"], board, openings, seams, radius, thickness)
-        measurements.append({"id": scope["id"], "a": scope["a"], "b": scope["b"], "threshold_mm": threshold,
-                             "layers": layers, "cross_face": cross})
+    measurements = measure_scopes(copper, options.get("scopes", []), board, openings, seams, thickness)
     result = {
         "schema_version": 1,
         "pcb": source(args.pcb),

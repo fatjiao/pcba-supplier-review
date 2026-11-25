@@ -1,17 +1,15 @@
 ---
 name: pcba-supplier-review
-description: 审核供应商的 SCH、PCB、BOM 和 Checklist，逐位号核对原理图与 BOM、检查 PCB 电气间隙和爬电距离，按请求输出本地 Excel 或飞书电子表格。随包提供当前公司 PCB 安规规则。支持独立 PCB 距离复核和公司 RDP 取证试运行。
+description: 在本机直接读取支持的 Altium 原生二进制 SCH 和 PCB，无需安装 AD。结合 BOM 和 Checklist 逐位号审核、检查 PCB 电气间隙及爬电距离，输出本地 Excel 或飞书电子表格。随包提供公司 PCB 安规规则，支持独立距离复核及按需使用 AD 取证。
 ---
 
 # PCBA 供应商资料初筛
 
-**验证状态。** 本地文件读取和 Excel 生成可独立执行。**RDP 端到端待真实会话验收。** 按 [真实会话验收条件](references/rdp.md#真实会话端到端验收) 记录远端 AD 打开、代表位号取证、回传、本地 BOM 比对及 Excel 回读的实际结果。
+完整审核接收 SCH、PCB、BOM 和适用的原理图 Checklist，可提供目录或文件路径。默认按 [原生图档直读](references/native-altium.md) 在本机只读取证，有无 AD 使用同一入口。有同版 `.PrjPcb` 和发布对应表时一并用于确认页、板号、修订及装配变体。
 
-完整审核接收 SCH、PCB、BOM 和适用的原理图 Checklist。本地 AD 和已配置的远端 AD 共用同一输入，可提供目录或文件路径。有同版 `.PrjPcb` 和发布对应表时一并使用。开始前核对板号、原理图和 PCB 修订、装配变体及提交范围，原件只读。
+PCB 距离检查默认使用随包的 [当前公司 PCB 安规规则](references/pcb-safety-rules.json)，对应《05 电子电路Check模板工具-》第 2 张表。按 [PCB 距离取证和判定](references/pcb-distance.md) 确认分支和网络。双层板按原生切口、无镀铜孔及制造资料确认的加工槽量测。多层板的指定顶层或底层铜边间隙按 [外层量测](references/pcb-distance.md#多层板外层铜边间隙) 处理。Gerber 层名用于定位图档，槽用途依据同版制造资料逐项判定。用户只查 PCB 距离时，交付独立 Sheet4。
 
-PCB 距离检查默认使用随包的 [当前公司 PCB 安规规则](references/pcb-safety-rules.json)，对应《05 电子电路Check模板工具-》第 2 张表。按 [PCB 距离取证和判定](references/pcb-distance.md) 确认适用分支和网络，使用 PCB 的板切口、无镀铜孔及制造资料确认的加工槽量测，并生成 Sheet4。Gerber 层名用于定位图档，槽的用途逐个依据加工定义判定。用户只要求查 PCB 距离时，交付独立 Sheet4。
-
-1. 需要原生远程取证时，按 [本机与远程 AD 的工作流程](references/rdp.md) 检查已有的接入方式。使用正常运行的接入方式自动打开工作副本、读取证据并回传。连接和取证诊断由 Skill 处理，工程师提供审核输入。接入受阻时标明卡点和受影响的审查。BOM 和 Checklist 在本机读取和核对。用户给了可用的同版导出时按 [证据要求](references/evidence.md) 核对可见字段和覆盖限制。公司保护件通过获准客户端读取。
+1. 用随包的 `scripts/read-altium.py` 生成原生证据。多页原理图逐份传入，同一提交有多块板时按板卡匹配 SCH、PCB 和 BOM 页签后分别取证。BOM 和 Checklist 在本机读取和核对，公司保护件通过获准客户端读取。完整工程网络、变体、正式 ERC／DRC 或直读覆盖以外的条款，按 [证据要求](references/evidence.md) 使用同版导出、制造资料或按需在已授权 AD 中复核。远程 AD 取证按 [RDP 工作流程](references/rdp.md) 记录实际会话、范围和回传，远端自动取证仍待端到端验收。
 2. 从四类资料分别记录实际读取范围、出处和版次关系。核对图面生效模型与 PCB 实际封装、装配变体和物料清单。缺件、发布关系未确认、远程操作受阻或只能读图面时，写明影响和补件，继续已有证据足以支持的检查。
 3. 按 [报告规则](references/report.md) 完成明细，并用 [Checklist 条款映射](references/checklist.md) 确认原理图条款。Sheet4 的安规限值 J 和公司推荐值 K 单独记录。达到 J 但低于 K，记黄色 OK。低于 J 或底线证据不足，记 NG 并说明原因。明确不适用才记 NC。
 
