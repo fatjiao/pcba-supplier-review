@@ -1,10 +1,22 @@
 # VeSync PCBA 供应商资料初筛
 
-供 VeSync 电子工程师审核供应商提交的原理图、PCB 和 BOM。工程师在 Windows 本机用 Codex 发起审核，默认直接读取受支持的原生二进制 Altium `.SchDoc` 和 `.PcbDoc`。没有安装 Altium Designer（AD）或没有连接 RDP 的工程师也可以运行。报告可交付为本地 Excel 或飞书电子表格。完整审核交付四张表，PCB 距离检查也可单独交付。
+供 VeSync 电子工程师审核供应商提交的原理图、PCB 和 BOM。工程师可在 Windows 本机用具备文件访问和脚本执行能力的 Agent 发起审核，默认直接读取受支持的原生二进制 Altium `.SchDoc` 和 `.PcbDoc`。没有安装 Altium Designer（AD）或没有连接 RDP 的工程师也可以运行。报告可交付为本地 Excel 或飞书电子表格。完整审核交付四张表，PCB 距离检查也可单独交付。
 
 > **验证状态**　已在新建的 Python 环境中，从解压后的安装包直接读取真实 SCH 和 PCB 图档。双层 PCB 与同版制造资料确认的铣槽 Gerber 已通过开槽、距离、黄色 OK 和 Excel 回读验证。RDP 自动取证仍待真实会话端到端验收。
 
-## 安装 Skill
+## 已实测的 Agent 和模型
+
+以下配置已实测能启动并运行本 Skill。Skill 使用 Agent 当前选择的模型。
+
+| Agent | 实测模型 | 推理档位 |
+| --- | --- | --- |
+| Codex | GPT-6.2 Sol | Ultra |
+| Antigravity | Hydrogen | Extra High |
+| 电脑版豆包 | 测试时所用模型未记录 | 未记录 |
+
+执行完整审核需要 Agent 能读取 Skill 和授权的本地工程文件、运行脚本，并回读报告。安装和调用方式按所用 Agent 的配置执行。
+
+## 安装 Skill（以 Codex 为例）
 
 1. [下载安装包](downloads/pcba-supplier-review.zip?raw=true)，解压后将完整的 [`pcba-supplier-review/`](pcba-supplier-review/) 目录复制到 Codex 的用户级技能目录，保留 `SKILL.md`、`references/` 和 `scripts/`。也可直接从仓库复制该目录。
 2. 按当前 Codex 的用户级目录配置安装。Windows 上可使用 `%USERPROFILE%\.agents\skills\`，安装后应有 `%USERPROFILE%\.agents\skills\pcba-supplier-review\SKILL.md`。若公司环境已配置其他用户级技能目录，使用已配置的位置。[Codex 技能目录说明](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills)
